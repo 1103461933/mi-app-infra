@@ -1,0 +1,22 @@
+# Configuración específica para DEV
+replicaCount: 1
+
+image:
+  tag: dev-latest  # Será reemplazado por el pipeline
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: dev.mi-app.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

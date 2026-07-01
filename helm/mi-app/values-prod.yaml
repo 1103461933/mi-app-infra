@@ -1,0 +1,31 @@
+# Configuración específica para PROD
+replicaCount: 3
+
+image:
+  tag: prod-latest  # Será reemplazado por el pipeline
+
+image:
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: mi-app.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70

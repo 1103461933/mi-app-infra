@@ -1,0 +1,22 @@
+# Configuración específica para STAGING
+replicaCount: 2
+
+image:
+  tag: staging-latest  # Será reemplazado por el pipeline
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: staging.mi-app.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
