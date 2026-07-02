@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/xlen911/mi-app-infra.git'  # Reemplaza con tu usuario
+    repoURL: 'https://github.com/1103461933/mi-app-infra.git'  # Reemplaza con tu usuario
     targetRevision: main
     path: helm/mi-app
     helm:
