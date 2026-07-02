@@ -4,6 +4,11 @@ replicaCount: 1
 image:
   tag: dev-latest
 
+service:
+  type: LoadBalancer   # ← Sobrescribe el valor de values.yaml
+  port: 80
+  targetPort: 8000
+
 ingress:
   enabled: true
   className: "nginx"
