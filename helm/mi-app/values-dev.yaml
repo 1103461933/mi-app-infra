@@ -2,7 +2,7 @@
 replicaCount: 1
 
 image:
-  tag: dev-fa9e2c77cd5de1ceee5b9e4ddbc878af731cd10a
+  tag: dev-latest
 
 ingress:
   enabled: true
