@@ -11,4 +11,4 @@ spec:
           args:
             - server
             - --auth-mode=server
-            - --insecure   # Solo para desarrollo/laboratorio
+            - --secure=false   # Solo para desarrollo/laboratorio
