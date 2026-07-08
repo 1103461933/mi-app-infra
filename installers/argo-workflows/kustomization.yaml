@@ -1,10 +1,9 @@
-apiVersion: kustomize.toolkit.io/v1
+apiVersion: kustomize.config.k8s.io/v1beta1  # ✅ Esta es la versión correcta
 kind: Kustomization
-
 resources:
-  # Instalación oficial de Argo Workflows (versión estable)
   - https://github.com/argoproj/argo-workflows/releases/download/v3.5.12/quick-start-minimal.yaml
-
-patchesStrategicMerge:
-  # Parches opcionales para personalizar la instalación
-  - patch-argo-server.yaml
+patches:
+  - path: patch-argo-server.yaml
+    target:
+      kind: Deployment
+      name: argo-server
