@@ -25,23 +25,23 @@ spec:
             arguments:
               parameters:
                 - name: image_tag
-                  value: "{{ workflows.parameters.image_tag }}"
+                  value: "{{ workflow.parameters.image_tag }}"
                 - name: target_environment
-                  value: "{{ workflows.parameters.target_environment }}"
+                  value: "{{ workflow.parameters.target_environment }}"
         - - name: commit-and-push
             template: commit-and-push
             arguments:
               parameters:
                 - name: image_tag
-                  value: "{{ workflows.parameters.image_tag }}"
+                  value: "{{ workflow.parameters.image_tag }}"
                 - name: target_environment
-                  value: "{{ workflows.parameters.target_environment }}"
+                  value: "{{ workflow.parameters.target_environment }}"
         - - name: trigger-argocd-sync
             template: trigger-argocd-sync
             arguments:
               parameters:
                 - name: target_environment
-                  value: "{{ workflows.parameters.target_environment }}"
+                  value: "{{ workflow.parameters.target_environment }}"
 
     - name: validate-and-prepare
       container:
@@ -49,9 +49,10 @@ spec:
         command: [sh, -c]
         args:
           - |
-            echo "Validating release for image tag: {{ workflows.parameters.image_tag }}"
-            echo "Target environment: {{ workflows.parameters.target_environment }}"
-            echo "Preparing to update manifests in repo: {{ workflows.parameters.repo_url }}"
+            # Cambio: workflow en lugar de workflows
+            echo "Validating release for image tag: {{ workflow.parameters.image_tag }}"
+            echo "Target environment: {{ workflow.parameters.target_environment }}"
+            echo "Preparing to update manifests in repo: {{ workflow.parameters.repo_url }}"
 
     - name: update-manifests
       inputs:
@@ -63,13 +64,15 @@ spec:
         command: [sh, -c]
         args:
           - |
-            git clone {{ workflows.parameters.repo_url }} /tmp/repo
+            # Cambio: workflow en lugar de workflows
+            git clone {{ workflow.parameters.repo_url }} /tmp/repo
             cd /tmp/repo
             git checkout main
             sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
-            # Opcional: Actualizar otros valores como replicaCount
-            echo "Updated image tag to {{ inputs.parameters.image_tag }} in overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml"
-            echo "::set-output name=changes_made::true"
+            
+            # IMPORTANTE: Para que el output funcione, hay que crear el archivo
+            echo "true" > /tmp/repo/changes_made.txt
+            echo "Updated image tag to {{ inputs.parameters.image_tag }}"
       outputs:
         parameters:
           - name: changes_made
@@ -86,14 +89,18 @@ spec:
         command: [sh, -c]
         args:
           - |
-            git clone {{ workflows.parameters.repo_url }} /tmp/repo
+            git clone {{ workflow.parameters.repo_url }} /tmp/repo
             cd /tmp/repo
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
             git add overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             git commit -m "Release: Update {{ inputs.parameters.target_environment }} image tag to {{ inputs.parameters.image_tag }} [skip ci]"
-            git push origin main
-            echo "Committed and pushed changes for {{ inputs.parameters.target_environment }}"
+            
+            # Nota: Necesitarás credenciales para el push (Token de GitHub)
+            # git push origin main
+            
+            # Crear archivo para el output
+            git rev-parse HEAD > /tmp/repo/commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
@@ -109,6 +116,6 @@ spec:
         command: [sh, -c]
         args:
           - |
-            echo "Triggering Argo CD sync for application: mi-app-{{ inputs.parameters.target_environment }}"
+            echo "Triggering Argo CD refresh for: mi-app-{{ inputs.parameters.target_environment }}"
+            # Asegúrate de que el nombre de la app coincida con el que tienes en Argo CD
             kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
-            echo "Argo CD refresh triggered for mi-app-{{ inputs.parameters.target_environment }}"
