@@ -1,0 +1,25 @@
+# Configuración específica para DEV
+# Este archivo es actualizado por Argo Workflows durante el release
+
+replicaCount: 1
+
+image:
+  tag: dev-latest  # ← Argo Workflows actualiza este valor
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: false  # Sin Ingress en DEV porque no tenemos Ingress Controller
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+environment: dev

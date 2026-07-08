@@ -1,0 +1,38 @@
+# Configuración específica para PROD
+# Este archivo es actualizado por Argo Workflows durante el release
+
+replicaCount: 3
+
+image:
+  tag: prod-latest  # ← Argo Workflows actualiza este valor
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: mi-app.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+environment: prod

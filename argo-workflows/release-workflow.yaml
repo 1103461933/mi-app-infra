@@ -1,0 +1,114 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: mi-app-release-workflow
+  namespace: argo
+spec:
+  entrypoint: mi-app-release
+  arguments:
+    parameters:
+      - name: image_tag
+        value: "latest"
+      - name: target_environment
+        value: "dev"
+      - name: repo_url
+        value: "https://github.com/1103461933/mi-app-infra.git"
+      - name: app_name
+        value: "mi-app"
+  templates:
+    - name: mi-app-release
+      steps:
+        - - name: validate-and-prepare
+            template: validate-and-prepare
+        - - name: update-manifests
+            template: update-manifests
+            arguments:
+              parameters:
+                - name: image_tag
+                  value: "{{ workflows.parameters.image_tag }}"
+                - name: target_environment
+                  value: "{{ workflows.parameters.target_environment }}"
+        - - name: commit-and-push
+            template: commit-and-push
+            arguments:
+              parameters:
+                - name: image_tag
+                  value: "{{ workflows.parameters.image_tag }}"
+                - name: target_environment
+                  value: "{{ workflows.parameters.target_environment }}"
+        - - name: trigger-argocd-sync
+            template: trigger-argocd-sync
+            arguments:
+              parameters:
+                - name: target_environment
+                  value: "{{ workflows.parameters.target_environment }}"
+
+    - name: validate-and-prepare
+      container:
+        image: alpine:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "Validating release for image tag: {{ workflows.parameters.image_tag }}"
+            echo "Target environment: {{ workflows.parameters.target_environment }}"
+            echo "Preparing to update manifests in repo: {{ workflows.parameters.repo_url }}"
+
+    - name: update-manifests
+      inputs:
+        parameters:
+          - name: image_tag
+          - name: target_environment
+      container:
+        image: alpine/git:latest
+        command: [sh, -c]
+        args:
+          - |
+            git clone {{ workflows.parameters.repo_url }} /tmp/repo
+            cd /tmp/repo
+            git checkout main
+            sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
+            # Opcional: Actualizar otros valores como replicaCount
+            echo "Updated image tag to {{ inputs.parameters.image_tag }} in overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml"
+            echo "::set-output name=changes_made::true"
+      outputs:
+        parameters:
+          - name: changes_made
+            valueFrom:
+              path: /tmp/repo/changes_made.txt
+
+    - name: commit-and-push
+      inputs:
+        parameters:
+          - name: image_tag
+          - name: target_environment
+      container:
+        image: alpine/git:latest
+        command: [sh, -c]
+        args:
+          - |
+            git clone {{ workflows.parameters.repo_url }} /tmp/repo
+            cd /tmp/repo
+            git config user.email "argo-workflows@mi-app.com"
+            git config user.name "Argo Workflows"
+            git add overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
+            git commit -m "Release: Update {{ inputs.parameters.target_environment }} image tag to {{ inputs.parameters.image_tag }} [skip ci]"
+            git push origin main
+            echo "Committed and pushed changes for {{ inputs.parameters.target_environment }}"
+      outputs:
+        parameters:
+          - name: commit_hash
+            valueFrom:
+              path: /tmp/repo/commit_hash.txt
+
+    - name: trigger-argocd-sync
+      inputs:
+        parameters:
+          - name: target_environment
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+          - |
+            echo "Triggering Argo CD sync for application: mi-app-{{ inputs.parameters.target_environment }}"
+            kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+            echo "Argo CD refresh triggered for mi-app-{{ inputs.parameters.target_environment }}"

@@ -1,0 +1,10 @@
+apiVersion: kustomize.toolkit.io/v1
+kind: Kustomization
+
+resources:
+  - ../../base/helm/mi-app
+
+helmCharts:
+  - name: mi-app
+    includeCRDs: true
+    valuesFile: patch-values.yaml
