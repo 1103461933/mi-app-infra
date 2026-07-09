@@ -49,7 +49,6 @@ spec:
         command: [sh, -c]
         args:
           - |
-            # Cambio: workflow en lugar de workflows
             echo "Validating release for image tag: {{ workflow.parameters.image_tag }}"
             echo "Target environment: {{ workflow.parameters.target_environment }}"
             echo "Preparing to update manifests in repo: {{ workflow.parameters.repo_url }}"
@@ -64,15 +63,16 @@ spec:
         command: [sh, -c]
         args:
           - |
-            # Cambio: workflow en lugar de workflows
+            echo "Cloning repository..."
             git clone {{ workflow.parameters.repo_url }} /tmp/repo
             cd /tmp/repo
             git checkout main
+            
+            echo "Updating image tag to {{ inputs.parameters.image_tag }}..."
             sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             
-            # IMPORTANTE: Para que el output funcione, hay que crear el archivo
-            echo "true" > /tmp/repo/changes_made.txt
-            echo "Updated image tag to {{ inputs.parameters.image_tag }}"
+            echo "true" > changes_made.txt
+            echo "Updated image tag to {{ inputs.parameters.image_tag }} in overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml"
       outputs:
         parameters:
           - name: changes_made
@@ -86,21 +86,36 @@ spec:
           - name: target_environment
       container:
         image: alpine/git:latest
+        env:
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-credentials
+                key: GITHUB_TOKEN
+          - name: GITHUB_USER
+            valueFrom:
+              secretKeyRef:
+                name: github-credentials
+                key: GITHUB_USER
         command: [sh, -c]
         args:
           - |
-            git clone {{ workflow.parameters.repo_url }} /tmp/repo
+            echo "Cloning repository with token..."
+            git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
             cd /tmp/repo
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
+            
+            echo "Committing changes..."
             git add overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             git commit -m "Release: Update {{ inputs.parameters.target_environment }} image tag to {{ inputs.parameters.image_tag }} [skip ci]"
             
-            # Nota: Necesitarás credenciales para el push (Token de GitHub)
-            # git push origin main
+            echo "Pushing changes..."
+            git push origin main
             
-            # Crear archivo para el output
-            git rev-parse HEAD > /tmp/repo/commit_hash.txt
+            COMMIT_HASH=$(git rev-parse HEAD)
+            echo "Committed and pushed changes for {{ inputs.parameters.target_environment }} (Commit: $COMMIT_HASH)"
+            echo $COMMIT_HASH > commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
@@ -117,5 +132,5 @@ spec:
         args:
           - |
             echo "Triggering Argo CD refresh for: mi-app-{{ inputs.parameters.target_environment }}"
-            # Asegúrate de que el nombre de la app coincida con el que tienes en Argo CD
             kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+            echo "Argo CD refresh triggered for mi-app-{{ inputs.parameters.target_environment }}"
