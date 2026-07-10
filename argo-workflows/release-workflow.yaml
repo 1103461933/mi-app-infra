@@ -5,6 +5,7 @@ metadata:
   namespace: argo
 spec:
   entrypoint: mi-app-release
+  serviceAccountName: argo-workflows-sa
   arguments:
     parameters:
       - name: image_tag
@@ -13,30 +14,48 @@ spec:
         value: "dev"
       - name: repo_url
         value: "https://github.com/1103461933/mi-app-infra.git"
-
   templates:
     - name: mi-app-release
       steps:
-        - - name: validate
+        - - name: validate-and-prepare
             template: validate-and-prepare
-        - - name: update-and-push
-            template: update-and-push-manifests
+        - - name: update-manifests
+            template: update-manifests
             arguments:
               parameters:
                 - name: image_tag
                   value: "{{ workflow.parameters.image_tag }}"
                 - name: target_environment
                   value: "{{ workflow.parameters.target_environment }}"
-        - - name: sync
+        - - name: commit-and-push
+            template: commit-and-push
+            arguments:
+              parameters:
+                - name: image_tag
+                  value: "{{ workflow.parameters.image_tag }}"
+                - name: target_environment
+                  value: "{{ workflow.parameters.target_environment }}"
+        - - name: trigger-argocd-sync
             template: trigger-argocd-sync
+            arguments:
+              parameters:
+                - name: target_environment
+                  value: "{{ workflow.parameters.target_environment }}"
 
     - name: validate-and-prepare
       container:
         image: alpine:latest
         command: [sh, -c]
-        args: ["echo Preparando release..."]
+        args:
+          - |
+            echo "=========================================="
+            echo "🔍 Validating release..."
+            echo "📦 Image Tag: {{ workflow.parameters.image_tag }}"
+            echo "🎯 Target Environment: {{ workflow.parameters.target_environment }}"
+            echo "📂 Repo URL: {{ workflow.parameters.repo_url }}"
+            echo "=========================================="
 
-    - name: update-and-push-manifests
+    - name: update-manifests
       inputs:
         parameters:
           - name: image_tag
@@ -44,46 +63,98 @@ spec:
       container:
         image: alpine/git:latest
         env:
-          - name: GITHUB_TOKEN
-            valueFrom:
-              secretKeyRef: { name: github-credentials, key: GITHUB_TOKEN }
-          - name: GITHUB_USER
-            valueFrom:
-              secretKeyRef: { name: github-credentials, key: GITHUB_USER }
+          - name: IMAGE_TAG
+            value: "{{ inputs.parameters.image_tag }}"
+          - name: TARGET_ENV
+            value: "{{ inputs.parameters.target_environment }}"
         command: [sh, -c]
         args:
           - |
-            set -e
-            git clone https://x-access-token:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
+            echo "📥 Cloning repository..."
+            git clone {{ workflow.parameters.repo_url }} /tmp/repo
             cd /tmp/repo
+            
+            echo "📝 Updating image tag to $IMAGE_TAG in helm/mi-app/values-dev.yaml"
+            # ✅ Ruta corregida: helm/mi-app/values-dev.yaml
+            sed -i "s|tag: .*|tag: $IMAGE_TAG|g" helm/mi-app/values-dev.yaml
+            
+            echo "✅ Manifests updated successfully"
+            echo "true" > /tmp/repo/changes_made.txt
+      outputs:
+        parameters:
+          - name: changes_made
+            valueFrom:
+              path: /tmp/repo/changes_made.txt
+
+    - name: commit-and-push
+      inputs:
+        parameters:
+          - name: image_tag
+          - name: target_environment
+      container:
+        image: alpine/git:latest
+        env:
+          - name: IMAGE_TAG
+            value: "{{ inputs.parameters.image_tag }}"
+          - name: TARGET_ENV
+            value: "{{ inputs.parameters.target_environment }}"
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: github-credentials
+                key: GITHUB_TOKEN
+          - name: GITHUB_USER
+            valueFrom:
+              secretKeyRef:
+                name: github-credentials
+                key: GITHUB_USER
+        command: [sh, -c]
+        args:
+          - |
+            echo "🔐 Cloning with GitHub token..."
+            git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
+            cd /tmp/repo
+
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
-            
-            # Actualizamos el tag en el archivo
-            sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
-            
-            git add .
-            if ! git diff --cached --quiet; then
-              git commit -m "Release: {{ inputs.parameters.image_tag }} [skip ci]"
-              git push origin main
-              echo "Push exitoso a GitHub."
+
+            # ✅ Asegurar que el sed se aplica al archivo correcto
+            sed -i "s|tag: .*|tag: $IMAGE_TAG|g" helm/mi-app/values-dev.yaml
+
+            git add helm/mi-app/values-dev.yaml
+
+            if git diff --quiet && git diff --staged --quiet; then
+              echo "ℹ️ No changes to commit"
             else
-              echo "No hay cambios detectados en el tag."
+              echo "📦 Committing changes..."
+              git commit -m "Release: Update $TARGET_ENV image tag to $IMAGE_TAG [skip ci]"
+              echo "🚀 Pushing to GitHub..."
+              git push origin main
+              echo "✅ Changes pushed successfully"
             fi
-            git rev-parse HEAD > /tmp/commit_hash.txt
+
+            COMMIT_HASH=$(git rev-parse HEAD)
+            echo "📌 Commit Hash: $COMMIT_HASH"
+            echo $COMMIT_HASH > /tmp/repo/commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
-            valueFrom: { path: /tmp/commit_hash.txt }
+            valueFrom:
+              path: /tmp/repo/commit_hash.txt
 
     - name: trigger-argocd-sync
+      inputs:
+        parameters:
+          - name: target_environment
       container:
         image: bitnami/kubectl:latest
+        env:
+          - name: TARGET_ENV
+            value: "{{ inputs.parameters.target_environment }}"
         command: [sh, -c]
         args:
           - |
-            set -e
-            # USAMOS EL NOMBRE REAL: argo-workflows
-            echo "Refrescando aplicación en Argo CD: argo-workflows"
-            kubectl patch application argo-workflows -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
-            echo "Refresh completado."
+            echo "🔄 Refreshing Argo CD application: mi-app-$TARGET_ENV"
+            kubectl patch application mi-app-$TARGET_ENV -n argocd --type=merge \
+              -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+            echo "✅ Argo CD refresh triggered successfully"
