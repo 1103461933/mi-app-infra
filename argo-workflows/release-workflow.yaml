@@ -15,21 +15,14 @@ spec:
         value: "https://github.com/1103461933/mi-app-infra.git"
       - name: app_name
         value: "mi-app"
+
   templates:
     - name: mi-app-release
       steps:
         - - name: validate-and-prepare
             template: validate-and-prepare
-        - - name: update-manifests
-            template: update-manifests
-            arguments:
-              parameters:
-                - name: image_tag
-                  value: "{{ workflow.parameters.image_tag }}"
-                - name: target_environment
-                  value: "{{ workflow.parameters.target_environment }}"
-        - - name: commit-and-push
-            template: commit-and-push
+        - - name: update-and-push
+            template: update-and-push-manifests
             arguments:
               parameters:
                 - name: image_tag
@@ -49,34 +42,12 @@ spec:
         command: [sh, -c]
         args:
           - |
+            set -e
             echo "Validating release for image tag: {{ workflow.parameters.image_tag }}"
             echo "Target environment: {{ workflow.parameters.target_environment }}"
+            echo "Repo: {{ workflow.parameters.repo_url }}"
 
-    - name: update-manifests
-      inputs:
-        parameters:
-          - name: image_tag
-          - name: target_environment
-      container:
-        image: alpine/git:latest
-        command: [sh, -c]
-        args:
-          - |
-            set -e
-            git clone {{ workflow.parameters.repo_url }} /tmp/repo
-            cd /tmp/repo
-            sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
-            
-            # Ruta absoluta para que Argo encuentre el archivo
-            echo "true" > /tmp/repo/changes_made.txt
-            echo "Manifests updated."
-      outputs:
-        parameters:
-          - name: changes_made
-            valueFrom:
-              path: /tmp/repo/changes_made.txt
-
-    - name: commit-and-push
+    - name: update-and-push-manifests
       inputs:
         parameters:
           - name: image_tag
@@ -98,30 +69,36 @@ spec:
         args:
           - |
             set -e
-            git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
+            echo "Clonando repositorio..."
+            # Usamos x-access-token para evitar el error 403
+            git clone https://x-access-token:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
             cd /tmp/repo
+            
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
             
-            # Volvemos a aplicar el sed por si acaso son pods distintos o volúmenes no compartidos
+            echo "Actualizando etiqueta de imagen a: {{ inputs.parameters.image_tag }}"
+            # SED para actualizar la etiqueta en el archivo correspondiente
             sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             
             git add .
-            # Verificar si hay cambios antes de hacer commit (evita error de "nothing to commit")
-            if git diff --quiet && git diff --staged --quiet; then
-              echo "No changes to commit"
-            else
-              git commit -m "Release: {{ inputs.parameters.image_tag }} [skip ci]"
+            
+            # Solo hacer commit si hay cambios reales
+            if ! git diff --cached --quiet; then
+              git commit -m "Release: {{ inputs.parameters.image_tag }} en {{ inputs.parameters.target_environment }} [skip ci]"
               git push origin main
+              echo "Push completado con éxito."
+            else
+              echo "No se detectaron cambios en los archivos."
             fi
             
-            # IMPORTANTE: Generar el archivo de salida en la ruta exacta
-            git rev-parse HEAD > /tmp/repo/commit_hash.txt
+            # Guardar el hash del commit para el output
+            git rev-parse HEAD > /tmp/commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
             valueFrom:
-              path: /tmp/repo/commit_hash.txt
+              path: /tmp/commit_hash.txt
 
     - name: trigger-argocd-sync
       inputs:
@@ -133,5 +110,7 @@ spec:
         args:
           - |
             set -e
-            echo "Refreshing Argo CD app..."
+            echo "Avisando a Argo CD para refrescar la aplicación: mi-app-{{ inputs.parameters.target_environment }}"
+            # Parcheamos la aplicación en el namespace 'argocd'
             kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+            echo "Refresh enviado exitosamente."
