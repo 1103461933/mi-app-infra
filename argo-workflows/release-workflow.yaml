@@ -13,13 +13,11 @@ spec:
         value: "dev"
       - name: repo_url
         value: "https://github.com/1103461933/mi-app-infra.git"
-      - name: app_name
-        value: "mi-app"
 
   templates:
     - name: mi-app-release
       steps:
-        - - name: validate-and-prepare
+        - - name: validate
             template: validate-and-prepare
         - - name: update-and-push
             template: update-and-push-manifests
@@ -29,23 +27,14 @@ spec:
                   value: "{{ workflow.parameters.image_tag }}"
                 - name: target_environment
                   value: "{{ workflow.parameters.target_environment }}"
-        - - name: trigger-argocd-sync
+        - - name: sync
             template: trigger-argocd-sync
-            arguments:
-              parameters:
-                - name: target_environment
-                  value: "{{ workflow.parameters.target_environment }}"
 
     - name: validate-and-prepare
       container:
         image: alpine:latest
         command: [sh, -c]
-        args:
-          - |
-            set -e
-            echo "Validating release for image tag: {{ workflow.parameters.image_tag }}"
-            echo "Target environment: {{ workflow.parameters.target_environment }}"
-            echo "Repo: {{ workflow.parameters.repo_url }}"
+        args: ["echo Preparando release..."]
 
     - name: update-and-push-manifests
       inputs:
@@ -57,60 +46,44 @@ spec:
         env:
           - name: GITHUB_TOKEN
             valueFrom:
-              secretKeyRef:
-                name: github-credentials
-                key: GITHUB_TOKEN
+              secretKeyRef: { name: github-credentials, key: GITHUB_TOKEN }
           - name: GITHUB_USER
             valueFrom:
-              secretKeyRef:
-                name: github-credentials
-                key: GITHUB_USER
+              secretKeyRef: { name: github-credentials, key: GITHUB_USER }
         command: [sh, -c]
         args:
           - |
             set -e
-            echo "Clonando repositorio..."
-            # Usamos x-access-token para evitar el error 403
             git clone https://x-access-token:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
             cd /tmp/repo
-            
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
             
-            echo "Actualizando etiqueta de imagen a: {{ inputs.parameters.image_tag }}"
-            # SED para actualizar la etiqueta en el archivo correspondiente
+            # Actualizamos el tag en el archivo
             sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             
             git add .
-            
-            # Solo hacer commit si hay cambios reales
             if ! git diff --cached --quiet; then
-              git commit -m "Release: {{ inputs.parameters.image_tag }} en {{ inputs.parameters.target_environment }} [skip ci]"
+              git commit -m "Release: {{ inputs.parameters.image_tag }} [skip ci]"
               git push origin main
-              echo "Push completado con éxito."
+              echo "Push exitoso a GitHub."
             else
-              echo "No se detectaron cambios en los archivos."
+              echo "No hay cambios detectados en el tag."
             fi
-            
-            # Guardar el hash del commit para el output
             git rev-parse HEAD > /tmp/commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
-            valueFrom:
-              path: /tmp/commit_hash.txt
+            valueFrom: { path: /tmp/commit_hash.txt }
 
     - name: trigger-argocd-sync
-      inputs:
-        parameters:
-          - name: target_environment
       container:
         image: bitnami/kubectl:latest
         command: [sh, -c]
         args:
           - |
             set -e
-            echo "Avisando a Argo CD para refrescar la aplicación: mi-app-{{ inputs.parameters.target_environment }}"
-            # Parcheamos la aplicación en el namespace 'argocd'
-            kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
-            echo "Refresh enviado exitosamente."
+            # USAMOS EL NOMBRE REAL: argo-workflows
+            echo "Refrescando aplicación en Argo CD: argo-workflows"
+            kubectl patch application argo-workflows -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+            echo "Refresh completado."
