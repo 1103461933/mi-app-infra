@@ -51,7 +51,6 @@ spec:
           - |
             echo "Validating release for image tag: {{ workflow.parameters.image_tag }}"
             echo "Target environment: {{ workflow.parameters.target_environment }}"
-            echo "Preparing to update manifests in repo: {{ workflow.parameters.repo_url }}"
 
     - name: update-manifests
       inputs:
@@ -63,16 +62,14 @@ spec:
         command: [sh, -c]
         args:
           - |
-            echo "Cloning repository..."
+            set -e
             git clone {{ workflow.parameters.repo_url }} /tmp/repo
             cd /tmp/repo
-            git checkout main
-            
-            echo "Updating image tag to {{ inputs.parameters.image_tag }}..."
             sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             
-            echo "true" > changes_made.txt
-            echo "Updated image tag to {{ inputs.parameters.image_tag }} in overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml"
+            # Ruta absoluta para que Argo encuentre el archivo
+            echo "true" > /tmp/repo/changes_made.txt
+            echo "Manifests updated."
       outputs:
         parameters:
           - name: changes_made
@@ -100,22 +97,26 @@ spec:
         command: [sh, -c]
         args:
           - |
-            echo "Cloning repository with token..."
+            set -e
             git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/1103461933/mi-app-infra.git /tmp/repo
             cd /tmp/repo
             git config user.email "argo-workflows@mi-app.com"
             git config user.name "Argo Workflows"
             
-            echo "Committing changes..."
-            git add overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
-            git commit -m "Release: Update {{ inputs.parameters.target_environment }} image tag to {{ inputs.parameters.image_tag }} [skip ci]"
+            # Volvemos a aplicar el sed por si acaso son pods distintos o volúmenes no compartidos
+            sed -i "s|tag: .*|tag: {{ inputs.parameters.image_tag }}|g" overlays/{{ inputs.parameters.target_environment }}/patch-values.yaml
             
-            echo "Pushing changes..."
-            git push origin main
+            git add .
+            # Verificar si hay cambios antes de hacer commit (evita error de "nothing to commit")
+            if git diff --quiet && git diff --staged --quiet; then
+              echo "No changes to commit"
+            else
+              git commit -m "Release: {{ inputs.parameters.image_tag }} [skip ci]"
+              git push origin main
+            fi
             
-            COMMIT_HASH=$(git rev-parse HEAD)
-            echo "Committed and pushed changes for {{ inputs.parameters.target_environment }} (Commit: $COMMIT_HASH)"
-            echo $COMMIT_HASH > commit_hash.txt
+            # IMPORTANTE: Generar el archivo de salida en la ruta exacta
+            git rev-parse HEAD > /tmp/repo/commit_hash.txt
       outputs:
         parameters:
           - name: commit_hash
@@ -131,6 +132,6 @@ spec:
         command: [sh, -c]
         args:
           - |
-            echo "Triggering Argo CD refresh for: mi-app-{{ inputs.parameters.target_environment }}"
+            set -e
+            echo "Refreshing Argo CD app..."
             kubectl patch application mi-app-{{ inputs.parameters.target_environment }} -n argocd --type=merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
-            echo "Argo CD refresh triggered for mi-app-{{ inputs.parameters.target_environment }}"
