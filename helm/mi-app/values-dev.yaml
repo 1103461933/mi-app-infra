@@ -2,7 +2,7 @@
 replicaCount: 1
 
 image:
-  tag: dev-latest
+  tag: v1.0.0
 
 service:
   type: LoadBalancer   # ← Sobrescribe el valor de values.yaml
